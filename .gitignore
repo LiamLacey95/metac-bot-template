@@ -172,3 +172,7 @@ cython_debug/
 # MacOS
 .DS_Store
 resolved_binary.json
+
+smoke.log
+smoke.err
+.venv/
