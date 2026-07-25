@@ -1,68 +1,94 @@
-# Calibrated aggregation — what this bot does differently
+# What this bot does differently, and why
 
-Forked from `Metaculus/metac-bot-template`. The research path and prompts are deliberately left
-close to the template. Exactly one thing is changed, so that any movement in the score can be
-attributed to it.
+Forked from `Metaculus/metac-bot-template`. `template_bot.py` is Metaculus's original, kept
+unmodified as the baseline being measured against.
 
-## The change
+## The scoring rule, since it drives everything
 
-The template samples N forecasts per question and takes the **median of the probabilities**.
+Summer FutureEval and MiniBench both use **spot peer score**: `100 x (your log score - the mean
+log score of every other bot)`, on your last forecast before the question closes. Unforecast
+questions score **0**, not negative.
 
-This takes the **mean in logit space** and then **shrinks it toward a base rate by an amount set
-by how much the samples disagreed**.
+Two consequences that matter more than any prompt:
 
-```python
-logits    = [logit(p) for p in samples]
-mean      = sum(logits) / len(logits)
-spread    = stdev(logits)
-agreement = 1 / (1 + (spread / spread_scale) ** 2)   # tight samples -> ~1, scattered -> ~0
-weight    = global_trust * agreement
-final     = prior_logit + weight * (mean - prior_logit)
+1. **The crowd term is outside your control**, so maximising expected peer score is exactly
+   maximising your own expected log score. The rule is essentially proper — predict your true
+   belief. It is *not* a reason to deviate from the consensus for its own sake.
+2. **Prize money is split in proportion to (sum of peer scores) squared.** Because
+   `E[S²] = E[S]² + Var(S)`, variance is paid for at fixed expected score, and *coverage*
+   compounds: every question you miss is a zero dragging a quadratic. Never missing a question is
+   worth more than any clever aggregation.
+
+## Changes, in descending order of expected value
+
+### 1. Cross-model ensemble
+
+The template draws N samples from **one** model at temperature. Those samples share a bias, so
+averaging them cancels decode noise and nothing else — the ensemble is one opinion repeated.
+
+This rotates samples round-robin across three model families (`ENSEMBLE_MODELS`). Errors are then
+partly independent, which is the only condition under which extremising the aggregate is a
+correction rather than bias amplification. With a single model configured, extremisation is
+automatically disabled.
+
+### 2. Logit-mean aggregation with a tail cap
+
+Template: median of the probabilities. Here: mean in logit space, optional extremisation, clipped
+to `[0.02, 0.98]`.
+
+The cap is the one calibration intervention that separated winners in the Fall 2025 survey. It
+insures against a catastrophic misread without touching the mid-range.
+
+### 3. Disagreement triggers research, it does not blend
+
+Sample spread is real information, but the useful response is to go find the missing fact rather
+than to average the ignorance. `needs_more_research()` exposes the signal; high-disagreement
+questions are flagged in the logs.
+
+## What I removed, and why — the useful part of this document
+
+The first version of this bot shrank every binary forecast toward a prior of 0.35, by an amount
+driven by sample spread. It was wrong in four separate ways, and all four are worth stating
+because they are easy mistakes to make again:
+
+1. **The prize rule taxes caution.** Prize is quadratic in summed peer score, so variance is paid
+   for. A standing haircut buys insurance the payout formula actively penalises.
+2. **It could never extremise.** The trust weight was capped below 1, so the layer pulled toward
+   0.35 *even when all samples agreed perfectly*. That is a directional bet on the question set,
+   not a calibration correction.
+3. **The prior was wrong for the questions.** "Most 'will X happen' questions resolve No" is
+   folklore; Metaculus's own MiniBench analysis found that the nothing-ever-happens prior baked
+   into template bots actively hurt on auto-generated questions.
+4. **The evidence assumed its conclusion.** The old test simulated a forecaster that was
+   overconfident *by construction*, then reported that a shrinkage layer helped. That is not
+   evidence about this bot; it is arithmetic about the assumption.
+
+The honest version of the idea is **Platt scaling** — a slope and bias in logit space, *fitted*
+from this bot's own resolved forecasts. Metaculus validated it on real AIB data as the best of
+five calibration methods, and ships an implementation. It needs ~200 resolved forecasts to fit,
+which this bot does not have yet. A fixed prior with a fixed trust weight is Platt scaling with
+both parameters guessed, which is strictly worse than not doing it.
+
+## Testing
+
+```bash
+python test_calibration.py
 ```
 
-## Why
+Property tests, no dependencies, no network. They check the things that must hold by
+construction: unanimous samples survive untouched, aggregation is symmetric under complement
+(a fixed prior breaks this, which is how the old bug would have been caught), extremisation moves
+away from 0.5 in both directions, and clipping bounds hold.
 
-The tournament scores with a log score, which punishes confident mistakes far harder than it
-rewards confident hits. Three things follow:
+The accompanying comparison reports logit-mean against the template's median across calibration
+regimes rather than picking the flattering one. The two are close — this layer is not where the
+points are, and the file says so.
 
-1. **Language models are overconfident.** They report 5% and 95% more often than the world
-   obliges. The median of five overconfident samples is still overconfident — averaging in
-   probability space does not fix a systematic bias, it just smooths it.
+## What is deliberately not done yet
 
-2. **Disagreement is information, and the median throws it away.** Five runs landing on
-   0.88–0.92 is a different epistemic state from five runs scattered across 0.15–0.90, yet both
-   can produce the same median. In the second case the model does not know, and a confident
-   number is a fiction with a straight face. Spread separates these, and it is free — the
-   samples already exist, so this costs no extra model calls.
-
-3. **The anchor is not 0.5.** Most "will X happen by date Y" questions resolve No. The default
-   prior here is 0.35 and it is the first parameter that should be fitted against resolved
-   questions rather than assumed.
-
-## Evidence, including where it loses
-
-`python test_calibration.py` simulates forecasters at varying overconfidence `c` and noise, then
-compares log scores against the template's median. The simulation is built so it *can* return a
-negative answer, and at `c = 1.0` it does.
-
-| Forecaster | Delta vs median (nats) |
-| --- | --- |
-| Perfectly calibrated, low noise (`c=1.0`, σ=0.5) | **−0.0019** |
-| Calibrated but noisy (`c=1.0`, σ=2.0) | +0.0435 |
-| Mildly overconfident (`c=1.3`) | +0.0086 → +0.0500 |
-| Strongly overconfident (`c=2.5`) | +0.0625 → **+0.1393** |
-
-The case for shipping it is the asymmetry: the cost when the assumption is wrong is about
-**−0.002 nats**; the gain when it is right is up to **+0.14**. That is a favourable bet by
-roughly two orders of magnitude, and it is the shape of bet a log score rewards.
-
-**This is a simulation, not evidence about real language models.** It shows the method works
-*if* LLM forecasts are overconfident, which is documented elsewhere but not measured here. The
-honest next step is fitting `prior`, `global_trust` and `spread_scale` against resolved
-questions, and MiniBench's two-week cycle is the right instrument for that.
-
-## Scope
-
-Binary questions only. Numeric and multiple-choice aggregation fall through to the framework
-untouched — they are a different problem with a different fix, and one calibration story
-stretched across all three is how a regression ships that nobody can attribute.
+- **Numeric and multiple-choice** fall through to the template untouched. This is where bots bleed
+  the most points against human forecasters, so it is the highest-value remaining work. Proven
+  open-source pipelines exist and porting one is a change that should land on its own.
+- **Fitted Platt scaling**, once there are enough resolved forecasts of this bot's own.
+- **A second research source.** Breadth of search correlates with score more than any single
+  provider does.
