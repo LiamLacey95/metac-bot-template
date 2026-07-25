@@ -133,6 +133,12 @@ def build_llms(free: bool) -> dict:
 class CalibratedBot(SummerTemplateBot2026):
     """Template bot with a cross-model ensemble and logit-mean aggregation."""
 
+    # The template parses each forecast twice and compares, which turns 6 forecast calls into 12
+    # parser calls and makes parsing - not forecasting - the dominant cost. Measured at
+    # $0.20/question against a budget that allows $0.05. One parse, on a cheap model, with the
+    # structured-output schema already constraining the result.
+    _structure_output_validation_samples = 1
+
     def __init__(self, *args, ensemble_models: list[str] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.ensemble_models = ensemble_models or []
