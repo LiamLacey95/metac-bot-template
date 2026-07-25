@@ -57,28 +57,35 @@ logger = logging.getLogger(__name__)
 
 # Three families, so the errors are not the same errors. All reachable on the sponsored
 # OpenRouter credits. Order matters only in that the rotation is round-robin.
-# Six samples per question, weighted by forecasting-skill-per-pound rather than by reputation.
-# Scores are Metaculus's own FutureEval measurements on resolved questions; prices are
-# OpenRouter's. model_value.py recomputes the whole table.
+# READ THIS BEFORE CHANGING THE MODEL LIST.
 #
-#   gemini-3.1-pro   19.84  £0.130/q   the best forecaster available, one sample for its judgement
-#   kimi-k2.6        11.39  £0.034/q   strong and cheap; two samples
-#   deepseek-v4-pro   8.66  £0.016/q   best value on the board; three samples
+# FutureEval publishes two different numbers and they are easy to confuse. The "skill score" on
+# the model leaderboard is anchored so that GPT-4o = 0. The tournament pays on PEER score, which
+# is measured against the current bot field - and that field is mostly frontier-model bots, so it
+# sits far above GPT-4o. Live in this tournament, GPT-4o scores about -8.4 per question, so a
+# skill score converts to expected peer score by subtracting roughly 8.5.
 #
-# Roughly £0.04 per question, so a £10 budget covers ~245 questions against the ~200 remaining.
-# An all-Gemini ensemble would score higher per question and cover only 77 of them - and since
-# unforecast questions score 0 while prize money is quadratic in the summed score, 200 questions
-# at a lower edge beats 77 at a higher one.
+# That correction inverts the ranking a naive reading gives:
 #
-# Deliberately excluded despite being cheap: MiniMax M2.5 (-4.74) and Qwen3 Max Thinking (-1.88)
-# score NEGATIVE on Metaculus's forecasting leaderboard. Cheap and wrong is not value.
+#   model                     skill    live peer/q
+#   gemini-3.5-flash              -         +13.2   <- best in the tournament, and cheap
+#   gpt-5.5-high                  -          +8.2
+#   claude-opus-4.7-high      14.62          +7.9
+#   gemini-3.1-pro-high       19.84          +7.4
+#   kimi-k2.6                 11.39          ~+3
+#   deepseek-v4-pro            8.66          -0.3   <- contributes nothing
+#   grok-4.20-multi-agent     14.99          -2.3   <- actively negative
+#
+# The previous version of this list was half deepseek and included models with negative live
+# peer scores, chosen from skill scores as though they were peer scores. Extra samples from a
+# zero-peer model do not add coverage value; they dilute the ones that work.
+#
+# There is also no coverage-versus-quality trade to make, because the best live model is nearly
+# the cheapest strong one. So: run it on everything.
 ENSEMBLE_MODELS = [
-    "openrouter/google/gemini-3.1-pro-preview",
-    "openrouter/moonshotai/kimi-k2.6",
-    "openrouter/moonshotai/kimi-k2.6",
-    "openrouter/deepseek/deepseek-v4-pro",
-    "openrouter/deepseek/deepseek-v4-pro",
-    "openrouter/deepseek/deepseek-v4-pro",
+    "openrouter/google/gemini-3.5-flash",
+    "openrouter/google/gemini-3.5-flash",
+    "openrouter/google/gemini-3.5-flash",
 ]
 # Slugs are verified against OpenRouter's public model list by check_models.py. Run it after any
 # edit here: a wrong slug does not fail loudly, it silently removes one family from the ensemble
@@ -89,6 +96,10 @@ ENSEMBLE_MODELS = [
 # GPT-OSS-120B: -0.72) against ~14-20 for the frontier models above. Running a season on these
 # would be paying nothing for nothing. The route to frontier models at no cost is Metaculus's
 # sponsored-credit programme, not OpenRouter's free tier.
+# Output cap. Flash bills thinking as output at the higher rate, so this is the dominant cost
+# lever - and a forecast rationale does not need to be long, it needs to reach a number.
+MAX_FORECAST_TOKENS = 1200
+
 FREE_ENSEMBLE_MODELS = [
     "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
     "openrouter/google/gemma-4-31b-it:free",
@@ -113,20 +124,26 @@ def build_llms(free: bool) -> dict:
             "parser": worker,
         }
     return {
-        # Numeric and multiple-choice questions use this one; only binary rotates the ensemble.
+        # Numeric and multiple-choice run on the same model as binary, deliberately. Metaculus's
+        # own analysis puts the human-versus-bot gap WIDEST on non-binary questions, and they are
+        # roughly 40% of the set - so that is where a weak model bleeds the most peer score.
+        # Downgrading them to save money would be cutting into the deepest wound.
         "default": GeneralLlm(
-            model="openrouter/moonshotai/kimi-k2.6", temperature=0.3, timeout=120, allowed_tries=2
+            model=ENSEMBLE_MODELS[0],
+            temperature=0.3,
+            timeout=120,
+            allowed_tries=2,
+            max_tokens=MAX_FORECAST_TOKENS,
         ),
-        # Sonar searches the live web, which is what the deprecated default was there to do.
-        # AskNews is the other sponsored option and is worth adding as a second source later:
-        # search breadth correlates with score more than any single provider does.
+        # Plain sonar, not sonar-pro: this is a search call, and the extra reasoning tier is not
+        # what makes it useful.
         "researcher": GeneralLlm(
             model="openrouter/perplexity/sonar", temperature=0.1, timeout=180, allowed_tries=2
         ),
-        # Summarising and parsing are mechanical. Paying frontier prices for them is waste that
-        # comes straight out of question coverage.
-        "summarizer": "openrouter/deepseek/deepseek-v4-pro",
-        "parser": "openrouter/deepseek/deepseek-v4-pro",
+        # Parsing is extraction from text that a schema already constrains. Model quality is
+        # irrelevant here, and this was the single largest pure waste in the original build.
+        "summarizer": "openrouter/xiaomi/mimo-v2.5",
+        "parser": "openrouter/xiaomi/mimo-v2.5",
     }
 
 
@@ -143,17 +160,28 @@ class CalibratedBot(SummerTemplateBot2026):
         super().__init__(*args, **kwargs)
         self.ensemble_models = ensemble_models or []
         self._model_cycle = itertools.cycle(self.ensemble_models) if self.ensemble_models else None
-        # Extremising only earns its place once samples span families. With a single model the
-        # samples share one bias and extremising would amplify it.
+        # Extremising only earns its place once samples span DIFFERENT families, where errors are
+        # partly independent. Count distinct models, not list length: the list repeats a model to
+        # weight it, so three entries of one model is still one opinion sampled three times, and
+        # extremising it would amplify a shared bias rather than correct anything.
+        distinct_families = {m.rsplit("/", 1)[0] for m in self.ensemble_models}
         self.aggregation = AggregationConfig(
-            extremise=EXTREMISE_CROSS_MODEL if len(self.ensemble_models) > 1 else 1.0
+            extremise=EXTREMISE_CROSS_MODEL if len(distinct_families) > 1 else 1.0
         )
 
     def _forecasting_llm(self):
         """Round-robin across the configured families; fall back to the framework's default."""
         if self._model_cycle is None:
             return self.get_llm("default", "llm")
-        return GeneralLlm(model=next(self._model_cycle), temperature=0.3, timeout=90, allowed_tries=2)
+        return GeneralLlm(
+            model=next(self._model_cycle),
+            temperature=0.3,
+            timeout=90,
+            allowed_tries=2,
+            # Flash bills thinking tokens as output, which is the dominant cost line. The
+            # rationale only needs to be long enough to reach a probability.
+            max_tokens=MAX_FORECAST_TOKENS,
+        )
 
     async def _binary_prompt_to_forecast(self, question, prompt):
         # Same body as the template's, with the model chosen per call rather than fixed.
@@ -321,7 +349,9 @@ if __name__ == "__main__":
 
     bot = CalibratedBot(
         research_reports_per_question=1,
-        predictions_per_research_report=6,  # two passes through three families
+        # Three, not six. Extra samples of one model buy maybe half a peer point while doubling
+        # the bill, and coverage is worth far more than sample count while the budget binds.
+        predictions_per_research_report=3,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,

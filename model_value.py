@@ -13,31 +13,36 @@ from __future__ import annotations
 import json
 import urllib.request
 
-# Metaculus FutureEval forecasting scores, captured 2026-07-25.
-METACULUS_SCORES = {
-    "google/gemini-3.1-pro-preview": 19.84,
-    "x-ai/grok-4.20-multi-agent": 14.99,
-    "anthropic/claude-opus-4.7": 14.62,
-    "openai/gpt-5.5": 14.06,
-    "openai/gpt-5.1": 12.14,
-    "openai/gpt-5": 11.49,
-    "moonshotai/kimi-k2.6": 11.39,
-    "x-ai/grok-4.3": 11.35,
-    "anthropic/claude-sonnet-4.5": 9.17,
-    "z-ai/glm-5": 8.66,
-    "deepseek/deepseek-v4-pro": 8.66,
-    "anthropic/claude-opus-4.5": 7.75,
-    "google/gemini-3-flash-preview": 7.32,
-    "x-ai/grok-4.20": 6.13,
-    # Negative scores. Cheap is not the same as good value.
-    "minimax/minimax-m2.5": -4.74,
-    "qwen/qwen3-max-thinking": -1.88,
+# LIVE PEER SCORE PER QUESTION, read from the Summer 2026 tournament leaderboard in advanced
+# mode (Metaculus runs its own benchmark bots in the field, so their per-question peer scores are
+# directly observable).
+#
+# THIS IS NOT THE SAME NUMBER AS THE MODEL LEADERBOARD'S "SKILL SCORE", and confusing the two
+# cost me a whole ensemble design. Skill score is anchored so GPT-4o = 0. Peer score is measured
+# against the CURRENT bot field, which is mostly frontier-model bots and therefore far above
+# GPT-4o - live, GPT-4o scores about -8.4 per question here. So:
+#
+#     expected peer per question  ~=  skill score - 8.5
+#
+# Read off the skill scale, deepseek-v4-pro looks like a mid-table bargain at 8.66. Live it is
+# -0.3 per question: it contributes nothing, and samples spent on it are samples not spent on a
+# model that scores. Only the peer numbers below should drive any decision.
+LIVE_PEER_PER_QUESTION = {
+    "google/gemini-3.5-flash": 13.2,
+    "openai/gpt-5.5": 8.2,
+    "anthropic/claude-opus-4.7": 7.9,
+    "google/gemini-3.1-pro-preview": 7.4,
+    "moonshotai/kimi-k2.6": 3.0,
+    "deepseek/deepseek-v4-pro": -0.3,
+    "x-ai/grok-4.3": -0.4,
+    "x-ai/grok-4.20-multi-agent": -2.3,
 }
+METACULUS_SCORES = LIVE_PEER_PER_QUESTION
 
-# Rough per-question usage for this bot: one research call plus six forecast samples and their
-# parsing. Deliberately conservative - better to over-estimate the season's cost.
-INPUT_TOKENS_PER_QUESTION = 28_000
-OUTPUT_TOKENS_PER_QUESTION = 9_000
+# Per-question usage for the current build: one research call, three forecast samples with output
+# capped at 1200 tokens, and three parser calls on a cheap model. Deliberately conservative.
+INPUT_TOKENS_PER_QUESTION = 18_000
+OUTPUT_TOKENS_PER_QUESTION = 5_000
 
 GBP_PER_USD = 0.79
 
