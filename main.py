@@ -13,8 +13,11 @@ Built on Metaculus's template. Changes from it, in descending order of how much 
 3. **Disagreement is logged**, not blended. Scattered samples mean a missing fact, and the
    intended response is another research pass rather than averaging the ignorance.
 
-Numeric questions now elicit 13 percentiles including tail anchors, which the template's six
-cannot express. Multiple-choice still falls through to the template.
+Numeric and multiple-choice fall through to the template. A 13-percentile elicitation with tail
+anchors was tried and REVERTED: it made every numeric question fail with
+`ValidationError: NumericDistribution`, and raising the token cap did not fix it, so the cause is
+the percentile set itself rather than truncation. Worth retrying against the sandbox once the
+real constraint is understood - the template's six percentiles work.
 """
 
 import argparse
@@ -200,92 +203,6 @@ class CalibratedBot(SummerTemplateBot2026):
         # Clip only at the edges the API rejects; the real cap is applied once, at aggregation.
         decimal_pred = max(0.001, min(0.999, parsed.prediction_in_decimal))
         return ReasonedPrediction(prediction_value=decimal_pred, reasoning=reasoning)
-
-    async def _run_forecast_on_numeric(self, question, research: str):
-        """Ask for tail anchors, which the template's six percentiles cannot express.
-
-        The template elicits 10/20/40/60/80/90. That distribution has no vocabulary for "the
-        outcome might land outside the displayed range" - the extremes it can state are P10 and
-        P90, so everything beyond them is whatever the CDF builder extrapolates. Under a log
-        score a distribution with tails that are too thin is punished savagely on exactly the
-        questions that surprise you, which are the ones that move a leaderboard.
-
-        Adding 1 / 2.5 / 5 and 95 / 97.5 / 99 lets a forecaster put real mass past an open bound
-        and say so explicitly. This mirrors the 13-percentile elicitation used by the
-        open-source bots that place well on numeric questions.
-        """
-        upper_bound_message, lower_bound_message = self._create_upper_and_lower_bound_messages(
-            question
-        )
-        from forecasting_tools import clean_indents
-        from datetime import datetime
-
-        prompt = clean_indents(
-            f"""
-            You are a professional forecaster interviewing for a job.
-
-            Your interview question is:
-            {question.question_text}
-
-            Background:
-            {question.background_info}
-
-            {question.resolution_criteria}
-
-            {question.fine_print}
-
-            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
-
-            Your research assistant says:
-            {research}
-
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-            {lower_bound_message}
-            {upper_bound_message}
-
-            Formatting Instructions:
-            - Give the answer in the units requested (e.g. whether you write 1,000,000 or 1 million).
-            - Never use scientific notation.
-            - Values must increase monotonically: percentile 1 is the smallest, percentile 99 the largest.
-
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The outcome if nothing changed.
-            (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
-            (e) A brief description of an unexpected scenario that results in a low outcome.
-            (f) A brief description of an unexpected scenario that results in a high outcome.
-
-            {self._get_conditional_disclaimer_if_necessary(question)}
-
-            On the tails, which decide this question's score more than the middle does:
-            - Set the 90/10 interval wide. Good forecasters are humble about unknown unknowns.
-            - The 1st and 99th percentiles are where you put genuine surprise. Do not set them
-              just outside your 10/90 - they should cover scenarios you consider unlikely but
-              possible, including ones you have not specifically imagined.
-            - If a bound is open and you believe the outcome may fall beyond it, place the
-              relevant percentiles PAST that bound rather than piling them up against it.
-              Bunching percentiles at an edge claims certainty you do not have.
-
-            The last thing you write is your final answer as:
-            "
-            Percentile 1: XX
-            Percentile 2.5: XX
-            Percentile 5: XX
-            Percentile 10: XX
-            Percentile 20: XX
-            Percentile 40: XX
-            Percentile 60: XX
-            Percentile 80: XX
-            Percentile 90: XX
-            Percentile 95: XX
-            Percentile 97.5: XX
-            Percentile 99: XX
-            "
-            """
-        )
-        return await self._numeric_prompt_to_forecast(question, prompt)
 
     async def _aggregate_predictions(
         self,
