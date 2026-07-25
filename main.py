@@ -13,9 +13,8 @@ Built on Metaculus's template. Changes from it, in descending order of how much 
 3. **Disagreement is logged**, not blended. Scattered samples mean a missing fact, and the
    intended response is another research pass rather than averaging the ignorance.
 
-Deliberately unchanged: numeric and multiple-choice handling falls through to the template. Those
-are where the field bleeds most points, so they are the next thing to fix - but porting someone
-else's proven pipeline is a separate change that should land on its own.
+Numeric questions now elicit 13 percentiles including tail anchors, which the template's six
+cannot express. Multiple-choice still falls through to the template.
 """
 
 import argparse
@@ -55,8 +54,6 @@ from template_bot import SummerTemplateBot2026  # noqa: E402
 dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Three families, so the errors are not the same errors. All reachable on the sponsored
-# OpenRouter credits. Order matters only in that the rotation is round-robin.
 # READ THIS BEFORE CHANGING THE MODEL LIST.
 #
 # FutureEval publishes two different numbers and they are easy to confuse. The "skill score" on
@@ -91,15 +88,20 @@ ENSEMBLE_MODELS = [
 # edit here: a wrong slug does not fail loudly, it silently removes one family from the ensemble
 # and every forecast is quietly worse.
 
-# Zero-cost models, for smoke tests and plumbing checks only. They are NOT competitive: on
-# Metaculus's own model leaderboard the free tier scores near zero (Gemma 4: 1.72,
-# GPT-OSS-120B: -0.72) against ~14-20 for the frontier models above. Running a season on these
-# would be paying nothing for nothing. The route to frontier models at no cost is Metaculus's
-# sponsored-credit programme, not OpenRouter's free tier.
-# Output cap. Flash bills thinking as output at the higher rate, so this is the dominant cost
-# lever - and a forecast rationale does not need to be long, it needs to reach a number.
-MAX_FORECAST_TOKENS = 1200
+# Output caps. Flash bills thinking as output at the higher rate, so this is the dominant cost
+# lever - but the two question types need different room.
+#
+# A binary answer needs a short rationale and one probability. A numeric answer needs the same
+# rationale PLUS thirteen percentile lines, and capping both at 1200 truncated every numeric
+# response mid-list: the run failed with `ValidationError: NumericDistribution` on every numeric
+# question and produced no forecasts at all. Caught by smoke-testing the rebuild rather than by
+# reading it.
+MAX_BINARY_TOKENS = 1200
+MAX_NUMERIC_TOKENS = 2400
 
+# Zero-cost models, for plumbing checks only. Not competitive, and rate-limited to 429s under
+# any sustained load. The route to frontier models at no cost is Metaculus's sponsored-credit
+# programme, not OpenRouter's free tier.
 FREE_ENSEMBLE_MODELS = [
     "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
     "openrouter/google/gemma-4-31b-it:free",
@@ -133,7 +135,7 @@ def build_llms(free: bool) -> dict:
             temperature=0.3,
             timeout=120,
             allowed_tries=2,
-            max_tokens=MAX_FORECAST_TOKENS,
+            max_tokens=MAX_NUMERIC_TOKENS,
         ),
         # Plain sonar, not sonar-pro: this is a search call, and the extra reasoning tier is not
         # what makes it useful.
@@ -180,7 +182,7 @@ class CalibratedBot(SummerTemplateBot2026):
             allowed_tries=2,
             # Flash bills thinking tokens as output, which is the dominant cost line. The
             # rationale only needs to be long enough to reach a probability.
-            max_tokens=MAX_FORECAST_TOKENS,
+            max_tokens=MAX_BINARY_TOKENS,
         )
 
     async def _binary_prompt_to_forecast(self, question, prompt):
