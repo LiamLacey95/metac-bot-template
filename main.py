@@ -60,8 +60,11 @@ logger = logging.getLogger(__name__)
 ENSEMBLE_MODELS = [
     "openrouter/openai/gpt-5.5",
     "openrouter/anthropic/claude-opus-4.7",
-    "openrouter/google/gemini-3.1-pro",
+    "openrouter/google/gemini-3.1-pro-preview",
 ]
+# Slugs are verified against OpenRouter's public model list by check_models.py. Run it after any
+# edit here: a wrong slug does not fail loudly, it silently removes one family from the ensemble
+# and every forecast is quietly worse.
 
 
 class CalibratedBot(SummerTemplateBot2026):
