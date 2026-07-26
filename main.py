@@ -97,18 +97,26 @@ logger = logging.getLogger(__name__)
 # glm-5-2 all appear there and on no model leaderboard. Kimi K3, Opus 5, GPT-5.6 and Grok 4.5 are
 # not benchmarked anywhere yet, so switching to one would be a guess, and the guesses on this page
 # have a poor record.
-# A SOTA list - gpt-5.6-sol plus kimi-k3 - is ready on the `sota-models` branch and is the right
-# thing to merge the day the budget stops binding. It is not merged, and the reason is measured
-# rather than argued: one sample of Sol plus one research call cost $0.225, so a two-sample
-# question lands near $0.31 against this list's $0.05. On the credit left that is 16 questions
-# instead of ~100, with ~200 still to come before the season closes on 6 September.
+# CURRENT SETTING IS A DELIBERATE BET ON UNMEASURED MODELS, made by Liam, against the table above.
+# Nothing released since 24 April is benchmarked anywhere - not on the model leaderboard, not as a
+# tournament benchmark bot - so Kimi K3, GPT-5.6 and Opus 5 have no forecasting score at all. The
+# case for them is the trend line on FutureEval's own chart, which slopes up with release date;
+# the case against is that the same chart has MiniMax M2.5 at -4.74 and Qwen3 Max Thinking at
+# -1.88, both recent. Recency raises the ceiling and guarantees nothing.
 #
-# Prize share goes as the SQUARE of summed peer score, so the comparison is 16 x p against
-# 100 x 13.48. Sol and K3 would have to score about 84 peer points per question to break even.
-# The best bot in this tournament scores 21.6. Unmeasured upside cannot cover a gap that size.
+# Two families rather than two copies of one, which is also the only condition under which the
+# extremisation step below is defensible.
+#
+# THE COST. GPT-5.6 Sol is $5/M in and $30/M out; Kimi K3 is $3/M and $15/M. Together, at two
+# samples on low reasoning, that is roughly £0.23 a question against gemini-3.5-flash's £0.05 -
+# about 22 questions of coverage on the credit left, against ~105, with ~200 still to come before
+# the season closes on 6 September. Prize share is proportional to the SQUARE of summed peer
+# score, so coverage that small needs these models to be dramatically better, not marginally.
+# If the sponsored credits arrive, this is the right list. If they do not, revert to
+# gemini-3.5-flash and take the coverage.
 ENSEMBLE_MODELS = [
-    "openrouter/google/gemini-3.5-flash",
-    "openrouter/google/gemini-3.5-flash",
+    "openrouter/openai/gpt-5.6-sol",
+    "openrouter/moonshotai/kimi-k3",
 ]
 # Slugs are verified against OpenRouter's public model list by check_models.py. Run it after any
 # edit here: a wrong slug does not fail loudly, it silently removes one family from the ensemble
