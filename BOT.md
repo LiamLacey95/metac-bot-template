@@ -69,11 +69,47 @@ five calibration methods, and ships an implementation. It needs ~200 resolved fo
 which this bot does not have yet. A fixed prior with a fixed trust weight is Platt scaling with
 both parameters guessed, which is strictly worse than not doing it.
 
+## What it costs to run, and the two expensive mistakes
+
+Every question is one research call, two forecast samples and a parse. Measured on bracketed runs
+against OpenRouter's credits endpoint — not estimated — that is about **$0.05 a question**, or
+roughly 105 questions on the credit this bot has. The season has about 200, so coverage is the
+binding constraint and the arithmetic below is not academic.
+
+**The cost lever is the thinking budget, not `max_tokens`.** `gemini-3.5-flash` is $9.00/M output
+against deepseek's $0.87, and it bills thinking at that output rate. One sample costs **$0.103**
+with thinking unbounded and **$0.028** with `reasoning_effort="low"`, reaching the same conclusion
+by the same route. Flash is still the right model — 232 peer points per pound against 150 for the
+next best, `python model_value.py` — so the answer is to bound its thinking, not to move off it.
+
+Two mistakes cost real money and both look like prudence:
+
+1. **Capping `max_tokens` to save money.** The cap covers thinking *and* answer out of one budget,
+   so a question that provoked a long deliberation had nothing left to write its answer with. The
+   rationale stopped mid-sentence, the parser correctly reported no forecast, and the question
+   scored zero — but the call still billed for every token it generated. A tight cap does not save
+   money; it pays full price for a guaranteed zero. It is a runaway guard and nothing else.
+2. **Choosing the parser on price alone.** Swapping it to `xiaomi/mimo-v2.5` for a fraction of a
+   cent produced 293 parse failures in one pass, answering `<<REQUESTED TYPE WAS NOT FOUND IN
+   TEXT>>` on text that plainly held a forecast. Parsing is the right place to spend nothing, but
+   "cheap" is not the same as "any cheap model". `deepseek-v4-pro` is a poor forecaster (-0.3 live
+   peer) and a reliable extractor, which is exactly the job.
+
+Both were diagnosed wrongly at first — blamed on a numeric elicitation change that had landed in
+the same window and was reverted for nothing. If a run breaks, diff it against the last one that
+passed before reasoning about which change is guilty.
+
 ## Testing
 
 ```bash
-python test_calibration.py
+python test_calibration.py                     # property tests, no network, no cost
+python smoke_one.py {binary|numeric|multiple_choice}   # one real question, ~$0.03
 ```
+
+`smoke_one.py` exists because a full pass over the sandbox tournament costs ~$0.87 and catches the
+same class of bug — a truncated rationale, a parser that cannot extract a schema, a dead model
+slug — as one question does for $0.03. Verify a change with it and spend the full pass only on the
+last check before enabling the schedule.
 
 Property tests, no dependencies, no network. They check the things that must hold by
 construction: unanimous samples survive untouched, aggregation is symmetric under complement
