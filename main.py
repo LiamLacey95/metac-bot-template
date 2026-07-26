@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import itertools
 import logging
+from datetime import datetime
 from typing import Literal
 
 import dotenv
@@ -257,6 +258,69 @@ class CalibratedBot(SummerTemplateBot2026):
             max_tokens=MAX_FORECAST_TOKENS,
             **EFFORT_KWARG,
         )
+
+    async def _run_forecast_on_binary(self, question, research):
+        """The template's prompt plus an explicit base-rate step.
+
+        Metaculus surveyed 39 bot makers and merged the answers with the final leaderboard. Two
+        findings are relevant here and both are cheap to act on:
+
+        - "Explicitly calculate base rates in a rigorous way" is one of only three features that
+          separate the TOP of the winners from the rest (r = +0.38, p = 0.032). 40% of the top 15
+          winners do it against 7% of the bottom half - and ZERO of the ten non-winners.
+        - The template's own prompt asks for the status quo outcome but never asks for a reference
+          class or a frequency. Those are different questions: the status quo is what happens if
+          nothing changes, a base rate is how often this KIND of thing happens.
+
+        This costs nothing - it is the same call with a longer instruction - which makes it the
+        best-evidenced change available while credit is the binding constraint.
+        """
+        from forecasting_tools.util.misc import clean_indents
+
+        prompt = clean_indents(
+            f"""
+            You are a professional forecaster interviewing for a job.
+
+            Your interview question is:
+            {question.question_text}
+
+            Question background:
+            {question.background_info}
+
+
+            This question's outcome will be determined by the specific criteria below. These criteria have not yet been satisfied:
+            {question.resolution_criteria}
+
+            {question.fine_print}
+
+
+            Your research assistant says:
+            {research}
+
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
+            Before answering you write:
+            (a) The time left until the outcome to the question is known.
+            (b) A REFERENCE CLASS and its BASE RATE. Name the class of events this question
+                belongs to, state how often the Yes outcome has occurred in that class, and give
+                the count you are reasoning from (for example "of the last 12 comparable votes,
+                3 passed - roughly 25%"). If you cannot name a count, say so explicitly rather
+                than inventing one, and explain what you are anchoring on instead.
+            (c) The status quo outcome if nothing changed. This is NOT the same as (b): the base
+                rate is how often this kind of thing happens, the status quo is what happens if
+                nothing moves between now and resolution.
+            (d) A brief description of a scenario that results in a No outcome.
+            (e) A brief description of a scenario that results in a Yes outcome.
+            (f) How far your final answer sits from the base rate in (b), and what specific
+                evidence justifies the distance. If nothing does, stay near the base rate.
+
+            You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            {self._get_conditional_disclaimer_if_necessary(question)}
+
+            The last thing you write is your final answer as: "Probability: ZZ%", 0-100
+            """
+        )
+        return await self._binary_prompt_to_forecast(question, prompt)
 
     async def _binary_prompt_to_forecast(self, question, prompt):
         # Same body as the template's, with the model chosen per call rather than fixed.

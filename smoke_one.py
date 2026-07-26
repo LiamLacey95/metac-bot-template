@@ -70,8 +70,18 @@ async def main(kind: str) -> int:
     print(f"Prediction: {str(report.prediction)[:400]}")
     # The failure this catches is a rationale cut off before its answer, so the END is the part
     # worth printing - a truncated one stops mid-sentence instead of on a probability.
-    print(f"Rationale ends: ...{reasoning[-200:]!r}")
-    return 0
+    print(f"\nRationale ends: ...{reasoning[-200:]!r}")
+
+    # A prompt change is only real if the model actually answers it. The base-rate step is the
+    # best-evidenced thing in the Metaculus bot-maker survey and also the easiest to add and then
+    # never check, so this asserts the rationale really contains a reference class rather than
+    # trusting that a longer instruction was obeyed.
+    lowered = reasoning.lower()
+    has_base_rate = any(k in lowered for k in ("base rate", "reference class"))
+    print(f"\nbase-rate step present: {'YES' if has_base_rate else 'NO - prompt was ignored'}")
+    if not has_base_rate:
+        print("  (rationale head)\n  " + reasoning[:500].replace("\n", "\n  "))
+    return 0 if has_base_rate else 1
 
 
 if __name__ == "__main__":
