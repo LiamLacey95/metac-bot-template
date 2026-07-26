@@ -346,6 +346,12 @@ if __name__ == "__main__":
         # Raise this the day Metaculus's sponsored credits land and the budget stops binding.
         predictions_per_research_report=2,
         use_research_summary_to_forecast=False,
+        # The framework summarises the research on every question by default, and with
+        # use_research_summary_to_forecast=False that summary is never fed to the forecast - it
+        # only decorates the published report. It is not a cheap call either: the input is the
+        # whole research text, so it was the second largest line item in the bill behind search
+        # itself, spent entirely on cosmetics. Off.
+        enable_summarize_research=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
