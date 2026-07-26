@@ -13,11 +13,15 @@ Built on Metaculus's template. Changes from it, in descending order of how much 
 3. **Disagreement is logged**, not blended. Scattered samples mean a missing fact, and the
    intended response is another research pass rather than averaging the ignorance.
 
-Numeric and multiple-choice fall through to the template. A 13-percentile elicitation with tail
-anchors was tried and REVERTED: it made every numeric question fail with
-`ValidationError: NumericDistribution`, and raising the token cap did not fix it, so the cause is
-the percentile set itself rather than truncation. Worth retrying against the sandbox once the
-real constraint is understood - the template's six percentiles work.
+Numeric and multiple-choice fall through to the template.
+
+A 13-percentile elicitation with tail anchors was tried, blamed for a run in which every numeric
+question failed with `ValidationError: NumericDistribution`, and reverted. That diagnosis was
+wrong. Comparing the failing logs against the last passing run showed the percentile list had
+completed fine there; what broke the run was two other changes made in the same window - a 1200
+token cap that cut the rationale off before its answer, and a parser model that could not extract
+a schema. Both are fixed above. The percentile change is worth re-trying now that it is not
+carrying the blame for something else.
 """
 
 import argparse
@@ -91,16 +95,20 @@ ENSEMBLE_MODELS = [
 # edit here: a wrong slug does not fail loudly, it silently removes one family from the ensemble
 # and every forecast is quietly worse.
 
-# Output caps. Flash bills thinking as output at the higher rate, so this is the dominant cost
-# lever - but the two question types need different room.
+# Output cap. Flash bills thinking as output at the higher rate, so this looks like the obvious
+# cost lever - and squeezing it was the single most expensive mistake in this build.
 #
-# A binary answer needs a short rationale and one probability. A numeric answer needs the same
-# rationale PLUS thirteen percentile lines, and capping both at 1200 truncated every numeric
-# response mid-list: the run failed with `ValidationError: NumericDistribution` on every numeric
-# question and produced no forecasts at all. Caught by smoke-testing the rebuild rather than by
-# reading it.
-MAX_BINARY_TOKENS = 1200
-MAX_NUMERIC_TOKENS = 2400
+# At 1200 the reasoning was cut mid-sentence before it reached the probability line. The parser
+# then correctly reported no forecast in the text, and the question scored nothing. A truncated
+# call still bills for every token it generated, so a tight cap does not save money: it pays full
+# price for a guaranteed zero. Two full sandbox passes and $1.06 went on this.
+#
+# The cap has to cover THINKING as well as the answer, because Flash spends both out of the same
+# budget and bills them at the same rate. That is why 4000 still truncated: a question that
+# provoked a long deliberation had nothing left over to write the answer with, so the length of
+# the visible output depended on how hard the model happened to think. This is a runaway guard,
+# not a cost lever - the cost lever is the model, and it is already the cheap one.
+MAX_FORECAST_TOKENS = 16000
 
 # Zero-cost models, for plumbing checks only. Not competitive, and rate-limited to 429s under
 # any sustained load. The route to frontier models at no cost is Metaculus's sponsored-credit
@@ -138,17 +146,21 @@ def build_llms(free: bool) -> dict:
             temperature=0.3,
             timeout=120,
             allowed_tries=2,
-            max_tokens=MAX_NUMERIC_TOKENS,
+            max_tokens=MAX_FORECAST_TOKENS,
         ),
         # Plain sonar, not sonar-pro: this is a search call, and the extra reasoning tier is not
         # what makes it useful.
         "researcher": GeneralLlm(
             model="openrouter/perplexity/sonar", temperature=0.1, timeout=180, allowed_tries=2
         ),
-        # Parsing is extraction from text that a schema already constrains. Model quality is
-        # irrelevant here, and this was the single largest pure waste in the original build.
-        "summarizer": "openrouter/xiaomi/mimo-v2.5",
-        "parser": "openrouter/xiaomi/mimo-v2.5",
+        # Parsing is extraction from text that a schema already constrains, so this is the right
+        # place to spend nothing - but "cheap" is not the same as "any cheap model". Swapping this
+        # to xiaomi/mimo-v2.5 to shave a fraction of a cent produced 293 parse failures in one
+        # pass: it answered `<<REQUESTED TYPE WAS NOT FOUND IN TEXT>>` on text that plainly held a
+        # forecast. deepseek-v4-pro is a poor forecaster (-0.3 live peer) and a reliable
+        # extractor, which is exactly the job. Zero parse failures over a full pass.
+        "summarizer": "openrouter/deepseek/deepseek-v4-pro",
+        "parser": "openrouter/deepseek/deepseek-v4-pro",
     }
 
 
@@ -183,9 +195,7 @@ class CalibratedBot(SummerTemplateBot2026):
             temperature=0.3,
             timeout=90,
             allowed_tries=2,
-            # Flash bills thinking tokens as output, which is the dominant cost line. The
-            # rationale only needs to be long enough to reach a probability.
-            max_tokens=MAX_BINARY_TOKENS,
+            max_tokens=MAX_FORECAST_TOKENS,
         )
 
     async def _binary_prompt_to_forecast(self, question, prompt):
@@ -268,9 +278,13 @@ if __name__ == "__main__":
 
     bot = CalibratedBot(
         research_reports_per_question=1,
-        # Three, not six. Extra samples of one model buy maybe half a peer point while doubling
-        # the bill, and coverage is worth far more than sample count while the budget binds.
-        predictions_per_research_report=3,
+        # Two, not six. The samples all come from one model at temperature, so averaging them
+        # cancels decode noise and nothing else - the third sample buys a fraction of a peer
+        # point. Coverage buys much more: an unforecast question scores exactly 0, and the prize
+        # pool pays on the SQUARE of summed peer score, so a question skipped for want of credit
+        # is the most expensive thing that can happen. Two samples is ~50% more questions covered.
+        # Raise this the day Metaculus's sponsored credits land and the budget stops binding.
+        predictions_per_research_report=2,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,

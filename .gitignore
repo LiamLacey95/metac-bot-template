@@ -176,3 +176,6 @@ resolved_binary.json
 smoke.log
 smoke.err
 .venv/
+run*.log
+smoke*.log
+smoke*.err
