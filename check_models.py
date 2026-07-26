@@ -1,10 +1,15 @@
-"""Verify every model slug in ENSEMBLE_MODELS actually exists on OpenRouter.
+"""Verify every OpenRouter model slug in main.py actually exists.
 
-Needs no API key - the model list is public. Run after editing ENSEMBLE_MODELS, and in CI.
+Needs no API key - the model list is public. Run after editing any model, and in CI.
 
 A wrong slug is the expensive kind of bug: it does not crash, it removes one model family from
 the ensemble and every subsequent forecast is quietly worse. `google/gemini-3.1-pro` looks
 entirely reasonable and does not exist; the real slug is `google/gemini-3.1-pro-preview`.
+
+This checks the ROLE models - researcher, summarizer, parser - as well as the ensemble, because
+the ensemble was never where the damage came from. A dead researcher slug stops the bot outright,
+and a parser that resolves but cannot extract a schema is worse than either: it fails silently on
+every question while looking like a working run.
 
     python check_models.py     # exit 0 if all slugs resolve, 1 otherwise
 """
@@ -39,6 +44,15 @@ def main() -> int:
         return 1
     slugs = re.findall(r'"([^"]+)"', block.group(1))
 
+    # Every other paid `openrouter/...` string in the file - the researcher, summarizer and
+    # parser. Free-tier slugs end in `:free` and are a separate, deliberately disposable path.
+    roles = [
+        s
+        for s in re.findall(r'"(openrouter/[^"]+)"', source)
+        if s not in slugs and not s.endswith(":free")
+    ]
+    slugs += sorted(set(roles))
+
     available = fetch_available()
     print(f"OpenRouter lists {len(available)} models.\n")
 
@@ -57,7 +71,7 @@ def main() -> int:
     if ok:
         print(f"All {len(slugs)} model slugs resolve.")
         return 0
-    print("At least one slug is wrong. Fix ENSEMBLE_MODELS in main.py before running the bot.")
+    print("At least one slug is wrong. Fix it in main.py before running the bot.")
     return 1
 
 
