@@ -106,9 +106,21 @@ ENSEMBLE_MODELS = [
 # The cap has to cover THINKING as well as the answer, because Flash spends both out of the same
 # budget and bills them at the same rate. That is why 4000 still truncated: a question that
 # provoked a long deliberation had nothing left over to write the answer with, so the length of
-# the visible output depended on how hard the model happened to think. This is a runaway guard,
-# not a cost lever - the cost lever is the model, and it is already the cheap one.
+# the visible output depended on how hard the model happened to think.
+#
+# So this is a runaway guard and NOT the cost lever. Squeezing it does not save money, it buys
+# truncated answers at full price.
 MAX_FORECAST_TOKENS = 16000
+
+# The actual cost lever. Flash is not cheap in absolute terms - $9.00/M output against
+# deepseek's $0.87 - and it bills thinking at that output rate, so an unbounded thinking budget
+# is the one line item that can quietly drain the season's credit. It is still the best value in
+# the field (232 peer points per pound against 150 for the next best; run model_value.py), so the
+# answer is to bound its thinking rather than to move off it.
+#
+# "low" rather than off: these are judgement questions, and the reasoning is what is being paid
+# for. Measure with a bracketed smoke_one run before changing this in either direction.
+REASONING_EFFORT = "low"
 
 # Zero-cost models, for plumbing checks only. Not competitive, and rate-limited to 429s under
 # any sustained load. The route to frontier models at no cost is Metaculus's sponsored-credit
@@ -147,6 +159,7 @@ def build_llms(free: bool) -> dict:
             timeout=120,
             allowed_tries=2,
             max_tokens=MAX_FORECAST_TOKENS,
+            reasoning_effort=REASONING_EFFORT,
         ),
         # Plain sonar, not sonar-pro: this is a search call, and the extra reasoning tier is not
         # what makes it useful.
@@ -196,6 +209,7 @@ class CalibratedBot(SummerTemplateBot2026):
             timeout=90,
             allowed_tries=2,
             max_tokens=MAX_FORECAST_TOKENS,
+            reasoning_effort=REASONING_EFFORT,
         )
 
     async def _binary_prompt_to_forecast(self, question, prompt):
