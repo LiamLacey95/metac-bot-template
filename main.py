@@ -63,31 +63,50 @@ logger = logging.getLogger(__name__)
 
 # READ THIS BEFORE CHANGING THE MODEL LIST.
 #
-# FutureEval publishes two different numbers and they are easy to confuse. The "skill score" on
-# the model leaderboard is anchored so that GPT-4o = 0. The tournament pays on PEER score, which
-# is measured against the current bot field - and that field is mostly frontier-model bots, so it
-# sits far above GPT-4o. Live in this tournament, GPT-4o scores about -8.4 per question, so a
-# skill score converts to expected peer score by subtracting roughly 8.5.
+# THERE ARE TWO METACULUS LEADERBOARDS AND ONLY ONE OF THEM PREDICTS ANYTHING HERE.
 #
-# That correction inverts the ranking a naive reading gives:
+# 1. The MODEL leaderboard (metaculus.com/futureeval/leaderboard/) publishes a "skill score"
+#    anchored so GPT-4o = 0. It is measured on a different question set, and as of 2026-07-26 its
+#    newest entry is GPT-5.5 from 24 April.
+# 2. The TOURNAMENT leaderboard, with the "advanced" toggle on, shows Metaculus's own benchmark
+#    bots competing in THIS season on THESE questions. Divide Total Score by Questions and you
+#    have the live peer score per question - which is the number prize money is computed from.
 #
-#   model                     skill    live peer/q
-#   gemini-3.5-flash              -         +13.2   <- best in the tournament, and cheap
-#   gpt-5.5-high                  -          +8.2
-#   claude-opus-4.7-high      14.62          +7.9
-#   gemini-3.1-pro-high       19.84          +7.4
-#   kimi-k2.6                 11.39          ~+3
-#   deepseek-v4-pro            8.66          -0.3   <- contributes nothing
-#   grok-4.20-multi-agent     14.99          -2.3   <- actively negative
+# The two disagree violently, and only the second one is the payout:
 #
-# The previous version of this list was half deepseek and included models with negative live
-# peer scores, chosen from skill scores as though they were peer scores. Extra samples from a
-# zero-peer model do not add coverage value; they dilute the ones that work.
+#   benchmark bot (live, 56-57 questions)      peer/q     model-leaderboard skill
+#   metac-gemini-3-5-flash+asknews             +13.48     not listed at all
+#   metac-gpt-5-5-instant+asknews              +11.24     13.84
+#   metac-gpt-5-5-high+asknews                  +8.30     14.06
+#   metac-claude-opus-4-7-high+asknews          +7.87     14.62
+#   metac-claude-opus-4-8-high+asknews          +6.74     not listed
+#   metac-gemini-3-1-pro-high+asknews           +7.40     19.84  <- top of the model leaderboard
+#   metac-gemini-3-1-pro+asknews                +3.45     19.03
+#   metac-deepseek-v4-pro-high+asknews          -0.30      8.66
+#   metac-grok-4-3-high+asknews                 -0.39     11.35
+#   metac-kimi-k2-6+asknews                     -1.74     11.39
+#   metac-grok-4-20-multi-agent+asknews         -2.26     14.99
 #
-# There is also no coverage-versus-quality trade to make, because the best live model is nearly
-# the cheapest strong one. So: run it on everything.
+# gemini-3.1-pro-high tops the model leaderboard at 19.84 and earns +7.40 live. grok-4.20
+# multi-agent sits fifth at 14.99 and is NEGATIVE live. Ranking by skill score picks a model that
+# loses points. This file briefly did exactly that, on the reasoning that gemini-3.5-flash "had no
+# measured score" - it has the best one in the tournament, on the only leaderboard that pays.
+#
+# So: read the tournament leaderboard in advanced mode. It is also the only source that covers
+# recent models at all - claude-opus-4-8, claude-sonnet-4-6, claude-fable-5-high, minimax-m3 and
+# glm-5-2 all appear there and on no model leaderboard. Kimi K3, Opus 5, GPT-5.6 and Grok 4.5 are
+# not benchmarked anywhere yet, so switching to one would be a guess, and the guesses on this page
+# have a poor record.
+# A SOTA list - gpt-5.6-sol plus kimi-k3 - is ready on the `sota-models` branch and is the right
+# thing to merge the day the budget stops binding. It is not merged, and the reason is measured
+# rather than argued: one sample of Sol plus one research call cost $0.225, so a two-sample
+# question lands near $0.31 against this list's $0.05. On the credit left that is 16 questions
+# instead of ~100, with ~200 still to come before the season closes on 6 September.
+#
+# Prize share goes as the SQUARE of summed peer score, so the comparison is 16 x p against
+# 100 x 13.48. Sol and K3 would have to score about 84 peer points per question to break even.
+# The best bot in this tournament scores 21.6. Unmeasured upside cannot cover a gap that size.
 ENSEMBLE_MODELS = [
-    "openrouter/google/gemini-3.5-flash",
     "openrouter/google/gemini-3.5-flash",
     "openrouter/google/gemini-3.5-flash",
 ]
@@ -112,15 +131,20 @@ ENSEMBLE_MODELS = [
 # truncated answers at full price.
 MAX_FORECAST_TOKENS = 16000
 
-# The actual cost lever. Flash is not cheap in absolute terms - $9.00/M output against
-# deepseek's $0.87 - and it bills thinking at that output rate, so an unbounded thinking budget
-# is the one line item that can quietly drain the season's credit. It is still the best value in
-# the field (232 peer points per pound against 150 for the next best; run model_value.py), so the
-# answer is to bound its thinking rather than to move off it.
+# "low" because thinking bills as output and GPT-5.6 Sol charges $30/M for it, so an unbounded
+# thinking budget on this list would cost more per question than the entire previous ensemble.
+# Measured on the model it replaced, low effort cut cost 3.7x for an answer that reached the same
+# conclusion by the same route.
 #
-# "low" rather than off: these are judgement questions, and the reasoning is what is being paid
-# for. Measure with a bracketed smoke_one run before changing this in either direction.
+# The counter-evidence is on the model leaderboard, where the high-effort row of the same model is
+# consistently and substantially better - Grok 4.20 goes 6.13 to 14.99, GPT 5.1 goes 4.64 to
+# 12.14, Kimi K2 goes 0.97 to 5.64. On a bigger budget this should be "high", and the fact that it
+# is not is a budget decision rather than a forecasting one.
 REASONING_EFFORT = "low"
+
+# Omitted entirely rather than passed as None, so the request carries the provider's own default
+# instead of an explicit null the provider may or may not interpret the same way.
+EFFORT_KWARG = {"reasoning_effort": REASONING_EFFORT} if REASONING_EFFORT else {}
 
 # Zero-cost models, for plumbing checks only. Not competitive, and rate-limited to 429s under
 # any sustained load. The route to frontier models at no cost is Metaculus's sponsored-credit
@@ -159,12 +183,34 @@ def build_llms(free: bool) -> dict:
             timeout=120,
             allowed_tries=2,
             max_tokens=MAX_FORECAST_TOKENS,
-            reasoning_effort=REASONING_EFFORT,
+            **EFFORT_KWARG,
         ),
-        # Plain sonar, not sonar-pro: this is a search call, and the extra reasoning tier is not
-        # what makes it useful.
+        # THE RESEARCH LAYER IS WORTH MORE THAN THE MODEL. Metaculus runs the same forecasting
+        # model behind several different research providers in this tournament, which isolates the
+        # research variable exactly. Live peer score per question, all on deepseek-r1:
+        #
+        #   + exa-online       +1.27
+        #   + asknews          -2.88
+        #   + NO RESEARCH      -6.99
+        #   + exa-answer       -8.11
+        #   + sonar           -15.48   <- what this bot used
+        #   + sonar-pro       -16.03
+        #
+        # Perplexity Sonar is 8.5 points per question WORSE THAN DOING NO RESEARCH, and 16.8
+        # below the best option. Nothing else on the board - not the model, not the aggregation,
+        # not the sample count - moves the score by anything like that much.
+        #
+        # `:online` is OpenRouter's Exa-backed web search plugin, which is the same search layer
+        # behind the winning row. It bills per result on top of the model's own tokens.
+        # Pinned to a cheap model deliberately, NOT to ENSEMBLE_MODELS[0]. Research is retrieval
+        # and summarisation; the judgement happens in the forecast call. Running it on Sol at
+        # $30/M output would roughly double the bill for the part of the pipeline where the
+        # provider matters more than the model.
         "researcher": GeneralLlm(
-            model="openrouter/perplexity/sonar", temperature=0.1, timeout=180, allowed_tries=2
+            model="openrouter/google/gemini-3.5-flash:online",
+            temperature=0.1,
+            timeout=180,
+            allowed_tries=2,
         ),
         # Parsing is extraction from text that a schema already constrains, so this is the right
         # place to spend nothing - but "cheap" is not the same as "any cheap model". Swapping this
@@ -209,7 +255,7 @@ class CalibratedBot(SummerTemplateBot2026):
             timeout=90,
             allowed_tries=2,
             max_tokens=MAX_FORECAST_TOKENS,
-            reasoning_effort=REASONING_EFFORT,
+            **EFFORT_KWARG,
         )
 
     async def _binary_prompt_to_forecast(self, question, prompt):

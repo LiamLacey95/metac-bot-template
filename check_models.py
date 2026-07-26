@@ -58,8 +58,10 @@ def main() -> int:
 
     ok = True
     for slug in slugs:
-        # The bot prefixes slugs with the litellm provider; OpenRouter's own ids omit it.
-        bare = slug.removeprefix("openrouter/")
+        # The bot prefixes slugs with the litellm provider; OpenRouter's own ids omit it. The
+        # `:online` suffix is OpenRouter's web-search plugin rather than part of the model id, so
+        # it has to come off before the lookup or a valid researcher reads as a dead slug.
+        bare = slug.removeprefix("openrouter/").removesuffix(":online")
         exists = bare in available
         print(f"  {'OK  ' if exists else 'FAIL'}  {slug}")
         if not exists:
